@@ -1,5 +1,6 @@
 from flask import Blueprint, current_app, request
 from pydantic import BaseModel, Field, ValidationError
+from typing import Literal
 from services.allocator import Allocator, OverloadedError, NotFoundError
 
 
@@ -98,3 +99,25 @@ def metrics_route():
     except Exception:
         current_app.logger.exception("metrics_internal_error", extra={"path": "/metrics"})
         return {"error": "internal"}, 500
+
+
+class StrategyBody(BaseModel):
+    strategy: Literal["best", "largest"]
+
+
+@bp.get("/strategy")
+def get_strategy():
+    settings = current_app.config["SETTINGS"]
+    return {"strategy": settings.ALLOC_STRATEGY}, 200
+
+
+@bp.post("/strategy")
+def set_strategy():
+    try:
+        body = StrategyBody.model_validate_json(request.data)
+    except ValidationError as ve:
+        return {"error": "bad_request", "detail": ve.errors()}, 400
+    settings = current_app.config["SETTINGS"]
+    settings.ALLOC_STRATEGY = body.strategy
+    current_app.logger.info("strategy_set", extra={"strategy": body.strategy})
+    return {"strategy": settings.ALLOC_STRATEGY}, 200
