@@ -27,7 +27,7 @@ def _allocator() -> Allocator:
     settings = current_app.config["SETTINGS"]
     session_factory = current_app.config["DB_SESSION_FACTORY"]
     engine = current_app.config["DB_ENGINE"]
-    return Allocator(session_factory, strategy=settings.ALLOC_STRATEGY, dialect_name=engine.dialect.name)
+    return Allocator(session_factory, strategy=settings.ALLOC_STRATEGY, dialect_name=engine.dialect.name, big_request_threshold=settings.BIG_REQUEST_THRESHOLD)
 
 
 @bp.post("/alloc")
@@ -54,7 +54,7 @@ def alloc_route():
         return result, 200
     except OverloadedError:
         current_app.logger.info("overloaded", extra={"request_id": body.request_id, "token_count": body.token_count})
-        return {"error": "overloaded"}, 429
+        return {"error": "overloaded"}, 429, {"Retry-After": str(current_app.config["SETTINGS"].OVERLOAD_RETRY_AFTER_SEC)}
     except Exception:
         current_app.logger.exception("alloc_internal_error", extra={"request_id": body.request_id})
         return {"error": "internal"}, 500
@@ -95,6 +95,8 @@ def metrics_route():
     try:
         stats = _allocator().get_usage_stats()
         current_app.logger.info("metrics", extra={"utilization": stats.get("utilization")})
+        if stats.get("utilization", 0) > 0.85:
+            current_app.logger.warning("utilization_high", extra={"utilization": stats.get("utilization")})
         return stats, 200
     except Exception:
         current_app.logger.exception("metrics_internal_error", extra={"path": "/metrics"})

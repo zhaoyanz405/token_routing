@@ -45,19 +45,27 @@ class Allocation(Base):
     node = relationship("Node", back_populates="allocations")
 
 
-def init_engine(database_url: str):
+def init_engine(database_url: str, pool_size: int | None = None, max_overflow: int | None = None, pool_timeout: int | None = None):
     if database_url.startswith("sqlite"):
         engine_kwargs = {
             "future": True,
             "connect_args": {"check_same_thread": False},
             "pool_pre_ping": True,
         }
+
         if ":memory:" in database_url:
             from sqlalchemy.pool import StaticPool
             engine_kwargs["poolclass"] = StaticPool
         return create_engine(database_url, **engine_kwargs)
     
-    return create_engine(database_url, future=True, pool_pre_ping=True)
+    engine_kwargs = {"future": True, "pool_pre_ping": True}
+    if pool_size is not None:
+        engine_kwargs["pool_size"] = pool_size
+    if max_overflow is not None:
+        engine_kwargs["max_overflow"] = max_overflow
+    if pool_timeout is not None:
+        engine_kwargs["pool_timeout"] = pool_timeout
+    return create_engine(database_url, **engine_kwargs)
 
 
 def init_session_factory(engine):

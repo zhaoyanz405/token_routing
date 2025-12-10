@@ -1,9 +1,13 @@
 from typing import Optional
+import logging
 import threading
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from db.models import Node, Allocation
+
+
+logger = logging.getLogger(__name__)
 
 
 class OverloadedError(Exception):
@@ -34,7 +38,7 @@ class Allocator:
     - 策略选择：`best`（最佳适配，升序剩余）或 `largest`（最大剩余，降序），通过构造查询排序实现。
     """
 
-    def __init__(self, session_factory, strategy: str = "best", dialect_name: Optional[str] = None):
+    def __init__(self, session_factory, strategy: str = "best", dialect_name: Optional[str] = None, big_request_threshold: Optional[int] = None):
         """构造分配器。
 
         参数：
@@ -45,6 +49,7 @@ class Allocator:
         self._Session = session_factory
         self._strategy = strategy
         self._dialect_name = dialect_name
+        self._big_threshold = big_request_threshold
         # 保留本地锁字典（目前逻辑依赖数据库原子更新，锁仅预留不使用）
         self._locks: dict[int, threading.Lock] = {}
 
@@ -63,17 +68,27 @@ class Allocator:
         返回：`{"node_id": int, "remaining_quota": int}`
         异常：`OverloadedError` 无可用节点或原子更新失败。
         """
+        logger.info("alloc_start", extra={"request_id": request_id, "token_count": token_count, "strategy": self._strategy, "big_threshold": self._big_threshold})
         with self._Session() as session:
             with session.begin():  # 事务边界：查询→原子更新→写分配记录
                 existing = session.get(Allocation, request_id)
                 if existing and existing.status == "allocated":
                     node = session.get(Node, existing.node_id)
                     remaining = node.capacity_m - node.used_quota
+                    logger.info("alloc_idempotent", extra={"request_id": request_id, "node_id": node.id, "remaining_quota": remaining})
                     return {"node_id": node.id, "remaining_quota": remaining}
 
                 # 选择候选节点：满足剩余 >= 需求，按策略排序；Postgres 下尝试跳过已锁行
                 remaining_expr = Node.capacity_m - Node.used_quota
-                order = remaining_expr.asc() if self._strategy == "best" else remaining_expr.desc()
+                use_desc = False
+
+                # 当请求令牌数达到阈值(big_request_threshold)时，强制使用剩余降序（largest）选择节点，
+                # 以优先匹配剩余最多的节点，提升大请求的成功率并减少容量碎片化/热点风险。
+                if self._big_threshold is not None and token_count >= self._big_threshold:
+                    use_desc = True
+                    
+                order = remaining_expr.desc() if (self._strategy == "largest" or use_desc) else remaining_expr.asc()
+                logger.debug("alloc_order", extra={"use_desc": use_desc, "strategy": self._strategy, "token_count": token_count})
                 stmt = (
                     select(Node)
                     .where(remaining_expr >= token_count)
@@ -84,10 +99,12 @@ class Allocator:
 
                 node = session.execute(stmt).scalars().first()
                 if not node:
+                    logger.info("alloc_no_node", extra={"request_id": request_id, "token_count": token_count})
                     raise OverloadedError()
 
                 # 原子条件更新：只有当 (capacity - used) >= token_count 时才递增 used_quota
                 # 这一步在并发下保证不会出现负剩余或超卖
+                logger.debug("alloc_update_attempt", extra={"node_id": node.id, "token_count": token_count})
                 result = session.execute(
                     update(Node)
                     .where(Node.id == node.id)
@@ -96,6 +113,7 @@ class Allocator:
                 )
                 if result.rowcount == 0:
                     # 可能在本事务读到后，其他事务已占用该节点剩余，视为过载
+                    logger.info("alloc_update_conflict", extra={"request_id": request_id, "node_id": node.id, "token_count": token_count})
                     raise OverloadedError()
 
                 # 写入分配记录；唯一键冲突表示其他并发已写入，同请求幂等地返回既有分配
@@ -113,11 +131,13 @@ class Allocator:
                     existing = session.get(Allocation, request_id)
                     node = session.get(Node, existing.node_id)
                     remaining = node.capacity_m - node.used_quota
+                    logger.info("alloc_integrity_conflict", extra={"request_id": request_id, "node_id": node.id, "remaining_quota": remaining})
                     return {"node_id": node.id, "remaining_quota": remaining}
 
                 # 返回最新剩余（再次读取以反映更新后的值）
                 node = session.get(Node, node.id)
                 remaining = node.capacity_m - node.used_quota
+                logger.info("alloc_ok", extra={"request_id": request_id, "node_id": node.id, "remaining_quota": remaining})
                 return {"node_id": node.id, "remaining_quota": remaining}
 
     def free(self, request_id: str) -> dict:
@@ -129,10 +149,12 @@ class Allocator:
         3. 将分配记录状态标记为 `freed` 并提交。
         返回：`{"node_id": int}`
         """
+        logger.info("free_start", extra={"request_id": request_id})
         with self._Session() as session:
             with session.begin():
                 alloc = session.get(Allocation, request_id)
                 if not alloc or alloc.status != "allocated":
+                    logger.info("free_not_found", extra={"request_id": request_id})
                     raise NotFoundError()
 
                 node = session.get(Node, alloc.node_id)
@@ -143,6 +165,7 @@ class Allocator:
                 )
                 alloc.status = "freed"
                 session.flush()
+                logger.info("free_ok", extra={"request_id": request_id, "node_id": node.id, "released": alloc.token_count})
                 return {"node_id": node.id}
 
     def get_remaining_capacity(self) -> int:
@@ -153,7 +176,9 @@ class Allocator:
         """
         with self._Session() as session:
             rows = session.execute(select(Node.capacity_m, Node.used_quota)).all()
-            return sum(cap - used for cap, used in rows)
+            remaining = sum(cap - used for cap, used in rows)
+            logger.debug("remaining_total", extra={"remaining_total": remaining})
+            return remaining
 
     def get_usage_stats(self) -> dict:
         with self._Session() as session:
@@ -176,6 +201,7 @@ class Allocator:
                 vals = sorted([v for v in values if v >= 0])
                 if not vals:
                     return 0.0
+                
                 n = len(vals)
                 s = sum(vals)
                 if s == 0:
@@ -185,6 +211,7 @@ class Allocator:
                     cum += i * v
                 return (2 * cum) / (n * s) - (n + 1) / n
             imbalance_gini = _gini([n.used_quota for n in nodes])
+            
             return {
                 "total_capacity": total_capacity,
                 "used_total": used_total,
