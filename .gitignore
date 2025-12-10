@@ -1,0 +1,7 @@
+.trae
+.venv
+__pycache__
+.pytest*
+QA.md
+*.db
+.env
