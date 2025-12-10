@@ -154,3 +154,42 @@ class Allocator:
         with self._Session() as session:
             rows = session.execute(select(Node.capacity_m, Node.used_quota)).all()
             return sum(cap - used for cap, used in rows)
+
+    def get_usage_stats(self) -> dict:
+        with self._Session() as session:
+            nodes = session.execute(select(Node)).scalars().all()
+            total_capacity = sum(n.capacity_m for n in nodes) or 0
+            used_total = sum(n.used_quota for n in nodes) or 0
+            remaining_total = sum(n.capacity_m - n.used_quota for n in nodes) or 0
+            utilization = (used_total / total_capacity) if total_capacity > 0 else 0.0
+            per_node = [
+                {
+                    "id": n.id,
+                    "capacity_m": n.capacity_m,
+                    "used_quota": n.used_quota,
+                    "remaining": n.capacity_m - n.used_quota,
+                    "utilization": (n.used_quota / n.capacity_m) if n.capacity_m > 0 else 0.0,
+                }
+                for n in nodes
+            ]
+            def _gini(values: list[float]) -> float:
+                vals = sorted([v for v in values if v >= 0])
+                if not vals:
+                    return 0.0
+                n = len(vals)
+                s = sum(vals)
+                if s == 0:
+                    return 0.0
+                cum = 0.0
+                for i, v in enumerate(vals, 1):
+                    cum += i * v
+                return (2 * cum) / (n * s) - (n + 1) / n
+            imbalance_gini = _gini([n.used_quota for n in nodes])
+            return {
+                "total_capacity": total_capacity,
+                "used_total": used_total,
+                "remaining_total": remaining_total,
+                "utilization": utilization,
+                "per_node": per_node,
+                "imbalance_gini": imbalance_gini,
+            }

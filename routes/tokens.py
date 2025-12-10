@@ -87,3 +87,14 @@ def free_route():
     except Exception:
         current_app.logger.exception("free_internal_error", extra={"request_id": body.request_id})
         return {"error": "internal"}, 500
+
+
+@bp.get("/metrics")
+def metrics_route():
+    try:
+        stats = _allocator().get_usage_stats()
+        current_app.logger.info("metrics", extra={"utilization": stats.get("utilization")})
+        return stats, 200
+    except Exception:
+        current_app.logger.exception("metrics_internal_error", extra={"path": "/metrics"})
+        return {"error": "internal"}, 500
