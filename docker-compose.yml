@@ -32,6 +32,26 @@ services:
       timeout: 3s
       retries: 20
 
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: token_routing_app
+    environment:
+      APP_ENV: prod
+      DATABASE_URL: postgresql+psycopg2://container:container_pw@postgres:5432/token_routing
+      PORT: 8000
+      RATE_LIMIT_ENABLED: "true"
+      RATE_LIMIT_PROVIDER: "local"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
 volumes:
   pgdata:
   redisdata:
