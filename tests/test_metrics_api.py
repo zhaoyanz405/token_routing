@@ -2,22 +2,21 @@ import json
 import pytest
 from app import create_app
 from db.models import Node
-from config import Settings
+from config import get_settings
 
 
 @pytest.fixture
 def app():
-    settings = Settings(
-        DATABASE_URL="sqlite+pysqlite:///:memory:",
-        PORT=0,
-        NODES=3,
-        NODE_BUDGET=300,
-        ALLOC_STRATEGY="best",
-    )
+    settings = get_settings("test")
+    settings.NODES = 3
+    settings.NODE_BUDGET = 300
+    settings.ALLOC_STRATEGY = "best"
     app = create_app(settings)
     SessionLocal = app.config["DB_SESSION_FACTORY"]
     with SessionLocal() as session:
         with session.begin():
+            from db.models import Allocation
+            session.query(Allocation).delete()
             session.query(Node).delete()
             for i in range(settings.NODES):
                 session.add(Node(id=i, capacity_m=settings.NODE_BUDGET, used_quota=0))

@@ -1,32 +1,31 @@
 import json
 import pytest
 from app import create_app
-from config import Settings
+from config import get_settings
 from db.models import Node
 
 
 @pytest.fixture
 def app():
-    settings = Settings(
-        DATABASE_URL="sqlite+pysqlite:///:memory:",
-        PORT=0,
-        NODES=2,
-        NODE_BUDGET=300,
-        ALLOC_STRATEGY="best",
-        RATE_LIMIT_ENABLED=True,
-        RATE_LIMIT_GLOBAL_PER_SEC=3,
-        RATE_LIMIT_CLIENT_PER_SEC=2,
-        RATE_LIMIT_WINDOW_SEC=1,
-        OVERLOAD_RETRY_AFTER_SEC=2,
-        BIG_REQUEST_THRESHOLD=9999,
-        DB_POOL_SIZE=5,
-        DB_MAX_OVERFLOW=10,
-        DB_POOL_TIMEOUT=30,
-    )
+    settings = get_settings("test")
+    settings.NODES = 2
+    settings.NODE_BUDGET = 300
+    settings.ALLOC_STRATEGY = "best"
+    settings.RATE_LIMIT_ENABLED = True
+    settings.RATE_LIMIT_GLOBAL_PER_SEC = 3
+    settings.RATE_LIMIT_CLIENT_PER_SEC = 2
+    settings.RATE_LIMIT_WINDOW_SEC = 1
+    settings.OVERLOAD_RETRY_AFTER_SEC = 2
+    settings.BIG_REQUEST_THRESHOLD = 9999
+    settings.DB_POOL_SIZE = 5
+    settings.DB_MAX_OVERFLOW = 10
+    settings.DB_POOL_TIMEOUT = 30
     app = create_app(settings)
     SessionLocal = app.config["DB_SESSION_FACTORY"]
     with SessionLocal() as session:
         with session.begin():
+            from db.models import Allocation
+            session.query(Allocation).delete()
             session.query(Node).delete()
             for i in range(settings.NODES):
                 session.add(Node(id=i, capacity_m=settings.NODE_BUDGET, used_quota=0))

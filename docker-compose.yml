@@ -8,9 +8,10 @@ services:
       POSTGRES_PASSWORD: container_pw
       POSTGRES_DB: token_routing
     ports:
-      - "5432:5432"
+      - "55432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U container"]
       interval: 5s
@@ -22,7 +23,7 @@ services:
     container_name: token_routing_redis
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "6379:6379"
+      - "56379:6379"
     volumes:
       - redisdata:/data
     healthcheck:

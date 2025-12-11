@@ -37,12 +37,12 @@ def get_settings(env: Optional[str] = None) -> Settings:
         load_dotenv(dotenv_file)
 
     if env == "test":
-        default_db = "sqlite+pysqlite:///:memory:"
+        default_db = "postgresql+psycopg2://container:container_pw@localhost:55432/token_routing_test"
         default_port = 0
         default_nodes = 6
         default_budget = 300
     elif env == "dev":
-        default_db = os.getenv("DEV_DATABASE_URL", "sqlite+pysqlite:///./dev.db")
+        default_db = "postgresql+psycopg2://container:container_pw@localhost:55432/token_routing_dev"
         default_port = 3000
         default_nodes = 6
         default_budget = 300
@@ -55,8 +55,9 @@ def get_settings(env: Optional[str] = None) -> Settings:
         default_nodes = int(os.getenv("NODES", "6"))
         default_budget = int(os.getenv("NODE_BUDGET", "300"))
 
+    db_val = default_db if env in ("test", "dev") else os.getenv("DATABASE_URL", default_db)
     return Settings(
-        DATABASE_URL=os.getenv("DATABASE_URL", default_db),
+        DATABASE_URL=db_val,
         PORT=int(os.getenv("PORT", str(default_port))),
         NODES=int(os.getenv("NODES", str(default_nodes))),
         NODE_BUDGET=int(os.getenv("NODE_BUDGET", str(default_budget))),

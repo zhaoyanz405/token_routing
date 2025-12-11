@@ -43,10 +43,8 @@ def create_app(settings: Settings | None = None) -> Flask:
         else:
             _gb = getattr(settings, "RATE_LIMIT_GLOBAL_BURST", None)
             _cb = getattr(settings, "RATE_LIMIT_CLIENT_BURST", None)
-            gb_env = os.getenv("RATE_LIMIT_GLOBAL_BURST")
-            cb_env = os.getenv("RATE_LIMIT_CLIENT_BURST")
-            global_burst = int(gb_env) if gb_env else min(int(_gb or settings.RATE_LIMIT_GLOBAL_PER_SEC), int(settings.RATE_LIMIT_GLOBAL_PER_SEC))
-            client_burst = int(cb_env) if cb_env else min(int(_cb or settings.RATE_LIMIT_CLIENT_PER_SEC), int(settings.RATE_LIMIT_CLIENT_PER_SEC))
+            global_burst = min(int(_gb or settings.RATE_LIMIT_GLOBAL_PER_SEC), int(settings.RATE_LIMIT_GLOBAL_PER_SEC))
+            client_burst = min(int(_cb or settings.RATE_LIMIT_CLIENT_PER_SEC), int(settings.RATE_LIMIT_CLIENT_PER_SEC))
             limiter = TokenBucketLimiter(
                 global_rate=float(settings.RATE_LIMIT_GLOBAL_PER_SEC),
                 global_burst=global_burst,
